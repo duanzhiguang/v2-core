@@ -84,19 +84,29 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         blockTimestampLast = blockTimestamp;
         emit Sync(reserve0, reserve1);
     }
-
+     //铸造费方法
     // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)
     function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns (bool feeOn) {
+        //查询工厂合约（UniswapV2Factory.sol）feeTo变量值
         address feeTo = IUniswapV2Factory(factory).feeTo();
+        
         feeOn = feeTo != address(0);
+        
+        //定义K值
         uint _kLast = kLast; // gas savings
+        
         if (feeOn) {
             if (_kLast != 0) {
                 uint rootK = Math.sqrt(uint(_reserve0).mul(_reserve1));
                 uint rootKLast = Math.sqrt(_kLast);
                 if (rootK > rootKLast) {
+                    //分子
                     uint numerator = totalSupply.mul(rootK.sub(rootKLast));
+                    
+                    //分母
                     uint denominator = rootK.mul(5).add(rootKLast);
+                    
+                    //得到流动性
                     uint liquidity = numerator / denominator;
                     if (liquidity > 0) _mint(feeTo, liquidity);
                 }
@@ -106,16 +116,31 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         }
     }
 
+    //铸造方法：通过算法算出流动性代币金额，给到  to这个地址
     // this low-level function should be called from a contract which performs important safety checks
     function mint(address to) external lock returns (uint liquidity) {
+        //获取储备量0，储备量1
         (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
+        
+         //获取当前合约再token0合约内的余额
         uint balance0 = IERC20(token0).balanceOf(address(this));
+        
+        //获取当前合约再token1合约内的余额
         uint balance1 = IERC20(token1).balanceOf(address(this));
+        
+       //amount0=余额0-储备0
         uint amount0 = balance0.sub(_reserve0);
+        
+          //amount1=余额1-储备1
         uint amount1 = balance1.sub(_reserve1);
 
+        //将储备0和储备1带入铸造费中
         bool feeOn = _mintFee(_reserve0, _reserve1);
+        
+        //获取totalSupply ，必须在此处定义，因为totalSupply可以再mintFee中更新
         uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
+        
+        
         if (_totalSupply == 0) {
             liquidity = Math.sqrt(amount0.mul(amount1)).sub(MINIMUM_LIQUIDITY);
            _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
@@ -130,31 +155,53 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         emit Mint(msg.sender, amount0, amount1);
     }
 
+     //销毁方法  to 指定销毁的地址
     // this low-level function should be called from a contract which performs important safety checks
     function burn(address to) external lock returns (uint amount0, uint amount1) {
         (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
         address _token0 = token0;                                // gas savings
         address _token1 = token1;                                // gas savings
-        uint balance0 = IERC20(_token0).balanceOf(address(this));
-        uint balance1 = IERC20(_token1).balanceOf(address(this));
+             //获取当前合约再token0合约内的余额
+        uint balance0 = IERC20(token0).balanceOf(address(this));
+        
+        //获取当前合约再token1合约内的余额
+        uint balance1 = IERC20(token1).balanceOf(address(this));
+        
+        //从当前合约的余额映射中获取当前合约自身的流动性数量（合约本身流动性来自于 路由合约 用户发起移除流动性时获得的）
         uint liquidity = balanceOf[address(this)];
 
+        //返回主操费开关
         bool feeOn = _mintFee(_reserve0, _reserve1);
+        
         uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
+        
+        //amount0=流动性数量 * 余额0 / _totalSupply
         amount0 = liquidity.mul(balance0) / _totalSupply; // using balances ensures pro-rata distribution
+        
+        //amount1=流动性数量 * 余额1 / _totalSupply
         amount1 = liquidity.mul(balance1) / _totalSupply; // using balances ensures pro-rata distribution
+        
+        //判断确认：amount0和amount1都大于0
         require(amount0 > 0 && amount1 > 0, 'UniswapV2: INSUFFICIENT_LIQUIDITY_BURNED');
+        
+        //销毁当前合约内的流动性数量，
         _burn(address(this), liquidity);
+        
+        //将lp对应的token发送到用户的地址里面去
         _safeTransfer(_token0, to, amount0);
         _safeTransfer(_token1, to, amount1);
+        
+        //再分别更新两个token中用户的余额
         balance0 = IERC20(_token0).balanceOf(address(this));
         balance1 = IERC20(_token1).balanceOf(address(this));
 
+        //更新流动性中储备量
         _update(balance0, balance1, _reserve0, _reserve1);
         if (feeOn) kLast = uint(reserve0).mul(reserve1); // reserve0 and reserve1 are up-to-date
+        //触发销毁事件
         emit Burn(msg.sender, amount0, amount1, to);
     }
-
+        //交易方法
     // this low-level function should be called from a contract which performs important safety checks
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
         require(amount0Out > 0 || amount1Out > 0, 'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT');
@@ -163,30 +210,42 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
         uint balance0;
         uint balance1;
+        //1作用域开始
         { // scope for _token{0,1}, avoids stack too deep errors
         address _token0 = token0;
         address _token1 = token1;
         require(to != _token0 && to != _token1, 'UniswapV2: INVALID_TO');
         if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out); // optimistically transfer tokens
         if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out); // optimistically transfer tokens
+        // IUniswapV2Callee(to)  to必须是合约地址，且这个合约地址必须有uniswapV2Call方法，参数：msg.sender, amount0Out, amount1Out, data
         if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+        
+        
         balance0 = IERC20(_token0).balanceOf(address(this));
         balance1 = IERC20(_token1).balanceOf(address(this));
         }
+         //1作用域结束
+         
         uint amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
         uint amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
+        
         require(amount0In > 0 || amount1In > 0, 'UniswapV2: INSUFFICIENT_INPUT_AMOUNT');
+        
+        //2作用域开始
         { // scope for reserve{0,1}Adjusted, avoids stack too deep errors
         uint balance0Adjusted = balance0.mul(1000).sub(amount0In.mul(3));
         uint balance1Adjusted = balance1.mul(1000).sub(amount1In.mul(3));
+        //确认 路由合约收过手续费了
         require(balance0Adjusted.mul(balance1Adjusted) >= uint(_reserve0).mul(_reserve1).mul(1000**2), 'UniswapV2: K');
         }
+          //2作用域结束
 
         _update(balance0, balance1, _reserve0, _reserve1);
         emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
     }
 
     // force balances to match reserves
+    //强制平衡 以匹配储备
     function skim(address to) external lock {
         address _token0 = token0; // gas savings
         address _token1 = token1; // gas savings
@@ -195,6 +254,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     // force reserves to match balances
+    //强制准备金与余额匹配
     function sync() external lock {
         _update(IERC20(token0).balanceOf(address(this)), IERC20(token1).balanceOf(address(this)), reserve0, reserve1);
     }
